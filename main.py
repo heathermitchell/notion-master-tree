@@ -13,7 +13,7 @@ def serve_openapi():
             "version": "1.0.0"
         },
         "servers": [
-            {"url": "https://zenplify-master-tree-ninja.replit.app"}
+            {"url": "https://notion-master-tree.onrender.com/"}
         ],
         "paths": {
             "/add": {
