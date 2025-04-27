@@ -4,7 +4,8 @@ from flask import Flask, jsonify
 
 app = Flask(__name__)
 
-@app.route("/", methods=["GET"])
+@app.route("/add", methods=["POST"])
+
 def serve_openapi():
     schema = {
         "openapi": "3.0.0",
