@@ -1,47 +1,34 @@
 # main.py  – Zenplify Master Tree API
-from flask import Flask, request, jsonify
-from notion_client import Client
-import os
-import json
-from pathlib import Path
+# ---------- CONFIG & HELPER ----------
+DB_CACHE_DIR = Path("/tmp/db_ids")      # Render’s /tmp persists per instance
+DB_CACHE_DIR.mkdir(exist_ok=True)
 
-# ────────────────────────────────────────────
-# 1)  CONFIG
-# ────────────────────────────────────────────
-NOTION_TOKEN = os.environ["NOTION_TOKEN"]          # already set in Render
-DB_FILE       = Path("database_id.txt")            # stores the Master Tree ID
-DB_NAME       = "Master Tree"
+VALID_TREES = {"Brand", "Content", "SaaS", "AI Roles", "Other"}  # add more if needed
 
-notion = Client(auth=NOTION_TOKEN)
-app    = Flask(__name__)
+def _cache_path(tree: str) -> Path:
+    return DB_CACHE_DIR / f"{tree.lower().replace(' ', '_')}_id.txt"
 
-# ────────────────────────────────────────────
-# 2)  GET (or CREATE) DATABASE ID
-# ────────────────────────────────────────────
-def get_database_id() -> str:
-    # a) stored locally?
-    if DB_FILE.exists():
-        return DB_FILE.read_text().strip()
+def get_or_create_db(tree_name: str) -> str:
+    """Return the DB id for a given tree, creating & caching if missing."""
+    cache_file = _cache_path(tree_name)
+    if cache_file.exists():
+        return cache_file.read_text().strip()
 
-    # b) otherwise create a new DB under the first top-level page
-    parent_page = notion.search(filter={"property": "object", "value": "page"})["results"][0]["id"]
-
-    # basic property skeleton (expand later if desired)
-    props = {
-        "Tree":   {"select": {"options": []}},
-        "Type":   {"select": {"options": []}},
-        "Status": {"select": {"options": []}},
-        "Notes":  {"rich_text": {}},
-    }
+    # -- create fresh DB under first page in workspace --
+    search = notion.search(filter={"property": "object", "value": "page"})
+    if not search["results"]:
+        raise RuntimeError("No parent page found to attach new database!")
+    parent_id = search["results"][0]["id"]
 
     db = notion.databases.create(
-        parent={"type": "page_id", "page_id": parent_page},
-        title= [{"type": "text", "text": {"content": DB_NAME}}],
-        properties=props
+        parent={"page_id": parent_id},
+        title=[{"type": "text", "text": {"content": f"{tree_name} Tree"}}],
+        properties=DATABASE_PROPERTIES   # keep using your existing dict
     )
-
-    DB_FILE.write_text(db["id"])      # persist for future runs
-    return db["id"]
+    db_id = db["id"]
+    cache_file.write_text(db_id)
+    return db_id
+# ---------- /CONFIG & HELPER ----------
 
 
 DATABASE_ID = get_database_id()
