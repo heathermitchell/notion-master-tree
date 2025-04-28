@@ -1,4 +1,7 @@
 # main.py  – Zenplify Master Tree API
+from pathlib import Path
+from flask import Flask, request, jsonify
+
 # ---------- CONFIG & HELPER ----------
 DB_CACHE_DIR = Path("/tmp/db_ids")      # Render’s /tmp persists per instance
 DB_CACHE_DIR.mkdir(exist_ok=True)
@@ -88,17 +91,25 @@ def add_item():
 
     db_id = get_or_create_db(tree)
 
+   
+           # ----- build Notion properties cleanly -----
+    props = {
+        "Name":  {"title": [{"text": {"content": name}}]},
+        "Tree":  {"select": {"name": tree}},
+    }
+    if item_type:
+        props["Type"] = {"select": {"name": item_type}}
+    if status:
+        props["Status"] = {"select": {"name": status}}
+    if notes:
+        props["Notes"] = {"rich_text": [{"text": {"content": notes}}]}
+
     notion.pages.create(
         parent={"database_id": db_id},
-        properties={
-            "Name":   {"title": [{"text": {"content": name}}]},
-            "Tree":   {"select": {"name": tree}},
-            "Type":   {"select": {"name": item_type}}} if item_type else {},
-            "Status": {"select": {"name": status}}} if status else {},
-            "Notes":  {"rich_text": [{"text": {"content": notes}}]} if notes else {},
-        },
+        properties=props,
     )
     return {"message": "Item added"}, 200
+
 
 
 # ────────────────────────────────────────────
