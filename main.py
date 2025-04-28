@@ -77,16 +77,28 @@ def openapi_schema():
 def add_item():
     data = request.get_json(force=True)
 
+    tree   = data.get("Tree", "Other")
+    name   = data.get("Name", "Untitled")
+    item_type = data.get("Type", "")
+    status = data.get("Status", "")
+    notes  = data.get("Notes", "")
+
+    if tree not in VALID_TREES:
+        return {"error": f"Unknown Tree '{tree}'"}, 400
+
+    db_id = get_or_create_db(tree)
+
     notion.pages.create(
-        parent={"database_id": DATABASE_ID},
+        parent={"database_id": db_id},
         properties={
-            "Tree":   {"select": {"name": data["Tree"]}},
-            "Type":   {"select": {"name": data["Type"]}},
-            "Status": {"select": {"name": data["Status"]}},
-            "Notes":  {"rich_text": [{"text": {"content": data.get("Notes","")}}]}
-        }
+            "Name":   {"title": [{"text": {"content": name}}]},
+            "Tree":   {"select": {"name": tree}},
+            "Type":   {"select": {"name": item_type}}} if item_type else {},
+            "Status": {"select": {"name": status}}} if status else {},
+            "Notes":  {"rich_text": [{"text": {"content": notes}}]} if notes else {},
+        },
     )
-    return jsonify({"message": "Item added"}), 200
+    return {"message": "Item added"}, 200
 
 
 # ────────────────────────────────────────────
