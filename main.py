@@ -1,119 +1,78 @@
-# main.py  – Zenplify Master Tree API
+# main.py  — Zenplify “Master Tree” API (Render)
+
 from pathlib import Path
 from flask import Flask, request, jsonify
+from notion_client import Client
+import os, json
 
-# ---------- CONFIG & HELPER ----------
-DB_CACHE_DIR = Path("/tmp/db_ids")      # Render’s /tmp persists per instance
+# ── Config ─────────────────────────────────────────────────────────
+NOTION_TOKEN  = os.environ["NOTION_TOKEN"]          # set in Render
+DB_CACHE_DIR  = Path("/tmp/db_ids")                 # persists per instance
 DB_CACHE_DIR.mkdir(exist_ok=True)
+DB_FILE       = DB_CACHE_DIR / "database_id.txt"
+DB_NAME       = "Master Tree"
 
-VALID_TREES = {"Brand", "Content", "SaaS", "AI Roles", "Other"}  # add more if needed
+notion = Client(auth=NOTION_TOKEN)
+app    = Flask(__name__)
 
-def _cache_path(tree: str) -> Path:
-    return DB_CACHE_DIR / f"{tree.lower().replace(' ', '_')}_id.txt"
-
-def get_or_create_db(tree_name: str) -> str:
-    """Return the DB id for a given tree, creating & caching if missing."""
-    cache_file = _cache_path(tree_name)
-    if cache_file.exists():
-        return cache_file.read_text().strip()
-
-    # -- create fresh DB under first page in workspace --
-    search = notion.search(filter={"property": "object", "value": "page"})
-    if not search["results"]:
-        raise RuntimeError("No parent page found to attach new database!")
-    parent_id = search["results"][0]["id"]
-
+# ── Helpers ────────────────────────────────────────────────────────
+def create_master_tree() -> str:
+    """Create the Master Tree DB on the first top-level page & return its ID."""
+    top = notion.search(filter={"property": "object", "value": "page"})["results"][0]
+    props = {
+        "Name":   {"title": {}},
+        "Notes":  {"rich_text": {}},
+        "Tree":   {"select": {}},
+        "Type":   {"select": {}},
+        "Status": {"select": {}},
+    }
     db = notion.databases.create(
-        parent={"page_id": parent_id},
-        title=[{"type": "text", "text": {"content": f"{tree_name} Tree"}}],
-        properties=DATABASE_PROPERTIES   # keep using your existing dict
+        parent={"page_id": top["id"]},
+        title=[{"type": "text", "text": {"content": DB_NAME}}],
+        properties=props,
     )
-    db_id = db["id"]
-    cache_file.write_text(db_id)
+    return db["id"]
+
+def get_database_id() -> str:
+    """Retrieve cached DB ID or create/cache a new one."""
+    if DB_FILE.exists():
+        return DB_FILE.read_text().strip()
+
+    db_id = create_master_tree()
+    DB_FILE.write_text(db_id)
     return db_id
-# ---------- /CONFIG & HELPER ----------
 
+DB_ID = get_database_id()   # resolves at startup
 
-DATABASE_ID = get_database_id()
-
-# ────────────────────────────────────────────
-# 3)  OPENAPI SCHEMA  (GET "/")
-# ────────────────────────────────────────────
-@app.route("/", methods=["GET"])
-def openapi_schema():
-    return jsonify({
-        "openapi": "3.1.0",
-        "info": {"title": "Zenplify Master Tree API", "version": "1.1.0"},
-        "paths": {
-            "/add": {
-                "post": {
-                    "summary": "Add an item to the Master Tree",
-                    "operationId": "addItem",
-                    "requestBody": {
-                        "required": True,
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "Tree":   {"type": "string"},
-                                        "Type":   {"type": "string"},
-                                        "Status": {"type": "string"},
-                                        "Notes":  {"type": "string"}
-                                    },
-                                    "required": ["Tree", "Type", "Status"]
-                                }
-                            }
-                        }
-                    },
-                    "responses": {"200": {"description": "Item added"}}
-                }
-            }
-        },
-        "servers": [{"url": "https://notion-master-tree.onrender.com"}]
-    })
-
-# ────────────────────────────────────────────
-# 4)  ADD ITEM ENDPOINT  (POST "/add")
-# ────────────────────────────────────────────
+# ── Routes ─────────────────────────────────────────────────────────
 @app.route("/add", methods=["POST"])
 def add_item():
-    data = request.get_json(force=True)
+    data      = request.get_json(force=True)
+    name      = data.get("Name")   or "Untitled"
+    tree      = data.get("Tree")   or "Other"
+    item_type = data.get("Type")
+    status    = data.get("Status")
+    notes     = data.get("Notes")
 
-    tree   = data.get("Tree", "Other")
-    name   = data.get("Name", "Untitled")
-    item_type = data.get("Type", "")
-    status = data.get("Status", "")
-    notes  = data.get("Notes", "")
-
-    if tree not in VALID_TREES:
-        return {"error": f"Unknown Tree '{tree}'"}, 400
-
-    db_id = get_or_create_db(tree)
-
-   
-           # ----- build Notion properties cleanly -----
     props = {
         "Name":  {"title": [{"text": {"content": name}}]},
         "Tree":  {"select": {"name": tree}},
     }
     if item_type:
-        props["Type"] = {"select": {"name": item_type}}
+        props["Type"]   = {"select": {"name": item_type}}
     if status:
         props["Status"] = {"select": {"name": status}}
     if notes:
-        props["Notes"] = {"rich_text": [{"text": {"content": notes}}]}
+        props["Notes"]  = {"rich_text": [{"text": {"content": notes}}]}
 
-    notion.pages.create(
-        parent={"database_id": db_id},
-        properties=props,
-    )
-    return {"message": "Item added"}, 200
+    notion.pages.create(parent={"database_id": DB_ID}, properties=props)
+    return jsonify({"message": "Item added"}), 200
 
+# ── Health (optional) ──────────────────────────────────────────────
+@app.route("/", methods=["GET"])
+def health():
+    return "OK", 200
 
-
-# ────────────────────────────────────────────
-# 5)  START (Render uses the start command)
-# ────────────────────────────────────────────
+# ── Main ───────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    app.run(host="0.0.0.0", port=3000)
